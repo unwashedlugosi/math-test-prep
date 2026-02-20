@@ -27,6 +27,86 @@ function initResults() {
   return r;
 }
 
+// ===== FRACTION DISPLAY =====
+// Renders "3/4" and "2 1/3" as stacked visual fractions
+
+function Frac({ num, den }) {
+  return (
+    <span className="fd">
+      <span className="fd-num">{num}</span>
+      <span className="fd-den">{den}</span>
+    </span>
+  );
+}
+
+function MixedFrac({ whole, num, den }) {
+  return (
+    <span className="fd-mixed">
+      <span className="fd-whole">{whole}</span>
+      <Frac num={num} den={den} />
+    </span>
+  );
+}
+
+function renderText(text) {
+  if (!text || typeof text !== 'string') return text;
+  // Match mixed numbers first (digit space digit/digit), then simple fractions
+  const pattern = /(\d+)\s+(\d+)\/(\d+)|(\d+)\/(\d+)/g;
+  const parts = [];
+  let lastIndex = 0;
+  let match;
+  let key = 0;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    if (match[1] !== undefined) {
+      parts.push(<MixedFrac key={key++} whole={match[1]} num={match[2]} den={match[3]} />);
+    } else {
+      parts.push(<Frac key={key++} num={match[4]} den={match[5]} />);
+    }
+    lastIndex = pattern.lastIndex;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts.length > 0 ? parts : text;
+}
+
+function renderFracAnswer(answer) {
+  if (typeof answer === 'object' && answer.den) {
+    if (answer.num === 0) return answer.whole || '0';
+    if ((answer.whole || 0) === 0) return <Frac num={answer.num} den={answer.den} />;
+    return <MixedFrac whole={answer.whole} num={answer.num} den={answer.den} />;
+  }
+  return String(answer);
+}
+
+// ===== CONFIDENCE SELECTOR =====
+
+function ConfidenceSelector({ onSelect }) {
+  return (
+    <div className="confidence-selector">
+      <p className="confidence-prompt">How did that feel?</p>
+      <div className="confidence-faces">
+        <button className="confidence-btn" onClick={() => onSelect('confident')}>
+          <span className="confidence-face">😊</span>
+          <span className="confidence-label">Got it</span>
+        </button>
+        <button className="confidence-btn" onClick={() => onSelect('okay')}>
+          <span className="confidence-face">😐</span>
+          <span className="confidence-label">Meh</span>
+        </button>
+        <button className="confidence-btn" onClick={() => onSelect('struggling')}>
+          <span className="confidence-face">😟</span>
+          <span className="confidence-label">Hard</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ===== FRACTION INPUT COMPONENT =====
 
 function FractionInput({ onSubmit, disabled }) {
@@ -165,7 +245,7 @@ function ChoiceInput({ choices, onSubmit, disabled }) {
           disabled={disabled}
           className="choice-btn"
         >
-          {choice}
+          {renderText(choice)}
         </button>
       ))}
     </div>
@@ -174,18 +254,22 @@ function ChoiceInput({ choices, onSubmit, disabled }) {
 
 // ===== PROBLEM VIEW =====
 
-function ProblemView({ problem, onResult, showRetry = true }) {
-  const [state, setState] = useState('answering'); // answering | retry | correct | wrong | show-explanation
+function ProblemView({ problem, onResult, showRetry = true, showConfidence = false }) {
+  const [state, setState] = useState('answering'); // answering | retry | correct | wrong | confidence
   const [feedback, setFeedback] = useState('');
+  const [feedbackExtra, setFeedbackExtra] = useState(null); // JSX for fraction answer display
   const [attempts, setAttempts] = useState(0);
   const [key, setKey] = useState(0);
+  const [wasCorrect, setWasCorrect] = useState(false);
 
   // Reset when problem changes
   useEffect(() => {
     setState('answering');
     setFeedback('');
+    setFeedbackExtra(null);
     setAttempts(0);
     setKey(k => k + 1);
+    setWasCorrect(false);
   }, [problem.id]);
 
   const handleAnswer = (answer) => {
@@ -195,33 +279,55 @@ function ProblemView({ problem, onResult, showRetry = true }) {
     if (result === true) {
       setState('correct');
       setFeedback(attempts === 0 ? 'Nailed it!' : 'Got it on the retry!');
-      setTimeout(() => onResult(true), 1200);
+      setWasCorrect(true);
+      if (showConfidence) {
+        // Don't auto-advance — wait for confidence selection
+        setTimeout(() => setState('confidence'), 1000);
+      } else {
+        setTimeout(() => onResult(true), 1200);
+      }
     } else if (result === 'not-simplified') {
       setFeedback('Right value, but simplify your fraction!');
       setKey(k => k + 1);
-      // Don't count as wrong, let them try again
     } else if (result === 'not-mixed') {
-      setFeedback('Correct! But write it as a mixed number (like 1 1/8 instead of 9/8).');
+      setFeedback('Correct! But write it as a mixed number.');
       setKey(k => k + 1);
     } else if (attempts === 0 && showRetry) {
       setState('retry');
       setFeedback('Not quite. Give it one more shot!');
       setKey(k => k + 1);
-      // Reset to answering after a beat
       setTimeout(() => setState('answering'), 100);
     } else {
       setState('wrong');
-      setFeedback(`The answer is ${problem.inputType === 'fraction' ? formatFracObj(problem.answer) : problem.answer}.`);
+      setWasCorrect(false);
+      setFeedback('The answer is ');
+      setFeedbackExtra(
+        problem.inputType === 'fraction'
+          ? renderFracAnswer(problem.answer)
+          : String(problem.answer)
+      );
     }
   };
 
-  const isDisabled = state === 'correct' || state === 'wrong' || state === 'show-explanation';
+  const handleConfidence = (confidence) => {
+    onResult(wasCorrect, confidence);
+  };
+
+  const handleNext = () => {
+    if (showConfidence) {
+      setState('confidence');
+    } else {
+      onResult(false);
+    }
+  };
+
+  const isDisabled = state === 'correct' || state === 'wrong' || state === 'confidence';
 
   return (
     <div className={`problem-view ${state}`}>
       <div className="problem-question">
         {problem.type === 'word-problem' && <span className="problem-badge">Word Problem</span>}
-        <p>{problem.question}</p>
+        <p>{renderText(problem.question)}</p>
       </div>
 
       {problem.inputType === 'fraction' && (
@@ -235,32 +341,36 @@ function ProblemView({ problem, onResult, showRetry = true }) {
       )}
 
       {feedback && (
-        <div className={`feedback ${state === 'correct' ? 'feedback-correct' : state === 'wrong' ? 'feedback-wrong' : 'feedback-retry'}`}>
-          {state === 'correct' && <span className="feedback-icon">✓</span>}
+        <div className={`feedback ${state === 'correct' || state === 'confidence' ? 'feedback-correct' : state === 'wrong' ? 'feedback-wrong' : 'feedback-retry'}`}>
+          {(state === 'correct' || (state === 'confidence' && wasCorrect)) && <span className="feedback-icon">✓</span>}
           {state === 'wrong' && <span className="feedback-icon">✗</span>}
           {state === 'retry' || (state === 'answering' && attempts > 0) ? <span className="feedback-icon">↻</span> : null}
-          {feedback}
+          {feedback}{feedbackExtra}
         </div>
       )}
 
-      {(state === 'wrong' || state === 'show-explanation') && (
+      {state === 'wrong' && (
         <div className="explanation">
           <h4>Here's how to solve it:</h4>
           <ol>
             {problem.explanation.map((step, i) => (
-              <li key={i}>{step}</li>
+              <li key={i}>{renderText(step)}</li>
             ))}
           </ol>
-          <button className="next-btn" onClick={() => onResult(false)}>
+          <button className="next-btn" onClick={handleNext}>
             Next →
           </button>
         </div>
       )}
 
+      {state === 'confidence' && (
+        <ConfidenceSelector onSelect={handleConfidence} />
+      )}
+
       {problem.hint && state === 'answering' && attempts === 0 && (
         <details className="hint">
           <summary>Need a hint?</summary>
-          <p>{problem.hint}</p>
+          <p>{renderText(problem.hint)}</p>
         </details>
       )}
     </div>
@@ -314,30 +424,30 @@ function DiagnosticScreen({ onComplete }) {
   const [problems] = useState(() => generateDiagnostic());
   const [currentIndex, setCurrentIndex] = useState(0);
   const [results, setResults] = useState(initResults);
+  const [confidence, setConfidence] = useState({}); // { [topic]: ['confident', 'struggling', ...] }
 
-  const handleResult = (correct) => {
+  const handleResult = (correct, conf) => {
     const problem = problems[currentIndex];
-    setResults(prev => {
-      const updated = { ...prev };
-      updated[problem.topic] = {
-        correct: prev[problem.topic].correct + (correct ? 1 : 0),
-        total: prev[problem.topic].total + 1
-      };
-      return updated;
-    });
+
+    // Track confidence per topic (build new object so we can pass it to onComplete)
+    const updatedConfidence = { ...confidence };
+    if (!updatedConfidence[problem.topic]) updatedConfidence[problem.topic] = [];
+    updatedConfidence[problem.topic] = [...updatedConfidence[problem.topic], conf || 'okay'];
+    setConfidence(updatedConfidence);
+
+    const newResults = { ...results };
+    newResults[problem.topic] = {
+      correct: results[problem.topic].correct + (correct ? 1 : 0),
+      total: results[problem.topic].total + 1
+    };
+    setResults(newResults);
 
     if (currentIndex + 1 < problems.length) {
       setCurrentIndex(i => i + 1);
     } else {
-      // Use a timeout to let state update
       setTimeout(() => {
-        const finalResults = { ...results };
-        finalResults[problem.topic] = {
-          correct: results[problem.topic].correct + (correct ? 1 : 0),
-          total: results[problem.topic].total + 1
-        };
-        onComplete(finalResults);
-      }, 500);
+        onComplete(newResults, updatedConfidence);
+      }, 300);
     }
   };
 
@@ -364,6 +474,7 @@ function DiagnosticScreen({ onComplete }) {
         problem={problems[currentIndex]}
         onResult={handleResult}
         showRetry={false}
+        showConfidence={true}
       />
     </div>
   );
@@ -637,9 +748,9 @@ export default function App() {
     }
   }, [results, mastery]);
 
-  const handleDiagnosticComplete = useCallback((diagnosticResults) => {
+  const handleDiagnosticComplete = useCallback((diagnosticResults, confidenceData) => {
     setResults(diagnosticResults);
-    const m = calculateMastery(diagnosticResults);
+    const m = calculateMastery(diagnosticResults, confidenceData);
     setMastery(m);
     setScreen('mastery');
   }, []);

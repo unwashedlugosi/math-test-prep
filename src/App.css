@@ -854,6 +854,136 @@ input[type="number"] {
   color: var(--boss);
 }
 
+/* ===== FRACTION DISPLAY (inline stacked fractions) ===== */
+
+.fd {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  vertical-align: middle;
+  margin: 0 3px;
+  line-height: 1;
+  position: relative;
+  top: -2px;
+}
+
+.fd-num, .fd-den {
+  font-size: 0.8em;
+  line-height: 1.15;
+  text-align: center;
+  padding: 0 2px;
+}
+
+.fd-num {
+  border-bottom: 2px solid currentColor;
+  padding-bottom: 2px;
+}
+
+.fd-den {
+  padding-top: 2px;
+}
+
+.fd-mixed {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: middle;
+}
+
+.fd-whole {
+  font-size: 1em;
+  line-height: 1;
+}
+
+/* Fraction display inside problem questions — bigger */
+.problem-question .fd {
+  top: -3px;
+}
+
+.problem-question .fd-num,
+.problem-question .fd-den {
+  font-size: 0.85em;
+  padding: 0 3px;
+}
+
+/* Fraction display inside choices */
+.choice-btn .fd-num,
+.choice-btn .fd-den {
+  font-size: 0.8em;
+}
+
+/* Fraction display inside feedback */
+.feedback .fd-num,
+.feedback .fd-den {
+  font-size: 0.85em;
+}
+
+/* Fraction display inside explanations */
+.explanation .fd-num,
+.explanation .fd-den {
+  font-size: 0.8em;
+}
+
+/* ===== CONFIDENCE SELECTOR ===== */
+
+.confidence-selector {
+  text-align: center;
+  margin-top: 20px;
+  animation: fadeIn 0.4s ease;
+}
+
+.confidence-prompt {
+  font-size: 15px;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+  font-weight: 500;
+}
+
+.confidence-faces {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
+.confidence-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  padding: 16px 24px;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 90px;
+}
+
+.confidence-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+  transform: translateY(-2px);
+}
+
+.confidence-btn:active {
+  transform: translateY(0);
+}
+
+.confidence-face {
+  font-size: 32px;
+  line-height: 1;
+}
+
+.confidence-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.confidence-btn:hover .confidence-label {
+  color: var(--text);
+}
+
 /* ===== RESPONSIVE ===== */
 
 @media (max-width: 480px) {

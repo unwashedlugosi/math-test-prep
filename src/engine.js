@@ -1043,17 +1043,29 @@ export function checkProblemAnswer(problem, userInput) {
 
 // ===== MASTERY SCORING =====
 
-export function calculateMastery(results) {
+export function calculateMastery(results, confidence) {
   // results is { [topic]: { correct: number, total: number } }
+  // confidence is { [topic]: ['confident', 'okay', 'struggling', ...] } (optional)
   const mastery = {};
   for (const [topic, data] of Object.entries(results)) {
     if (data.total === 0) {
       mastery[topic] = 'untested';
     } else {
       const pct = data.correct / data.total;
-      if (pct >= 0.85) mastery[topic] = 'mastered';
-      else if (pct >= 0.5) mastery[topic] = 'learning';
-      else mastery[topic] = 'needs-work';
+      // Check confidence — if student felt struggling on this topic, downgrade mastery
+      const topicConf = confidence && confidence[topic];
+      const hasStruggling = topicConf && topicConf.some(c => c === 'struggling');
+      const allUnsure = topicConf && topicConf.every(c => c !== 'confident');
+
+      if (pct >= 0.85) {
+        // Got them right, but felt hard? Downgrade to learning so we practice more
+        if (hasStruggling) mastery[topic] = 'learning';
+        else mastery[topic] = 'mastered';
+      } else if (pct >= 0.5) {
+        mastery[topic] = 'learning';
+      } else {
+        mastery[topic] = 'needs-work';
+      }
     }
   }
   return mastery;
