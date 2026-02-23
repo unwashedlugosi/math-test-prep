@@ -760,12 +760,23 @@ function SessionScreen({ profile, mastery, onComplete, resumeSession }) {
     }
   }, [sessionStarted]);
 
-  // Check timer expiry
+  // Track whether session has ended to prevent double-finish
+  const finishedRef = useRef(false);
+
+  // Check timer expiry — uses ref-based finish to avoid stale closures
   useEffect(() => {
     if (!sessionStarted) return;
     const interval = setInterval(() => {
-      if (Date.now() - startTime >= SESSION_LIMIT_MS) {
-        finishSession();
+      if (Date.now() - startTime >= SESSION_LIMIT_MS && !finishedRef.current) {
+        finishedRef.current = true;
+        // Read latest state from the saved session_state (most reliable source)
+        const ss = lastSavedStateRef.current;
+        if (ss && ss.sessionResults && ss.sessionResults.length > 0) {
+          doFinish(ss.sessionResults, ss.sessionXP, ss.streak, ss.topicHistory, ss.sessionMastery);
+        } else {
+          // Fallback: end with empty data rather than stale data
+          doFinish([], 0, 0, {}, {});
+        }
       }
     }, 1000);
     return () => clearInterval(interval);
@@ -779,45 +790,30 @@ function SessionScreen({ profile, mastery, onComplete, resumeSession }) {
     setRecentTopics(prev => [...prev.slice(-2), topic]);
   };
 
-  // Use refs to avoid stale closure in finishSession (called via setTimeout)
-  const sessionResultsRef = useRef(sessionResults);
-  sessionResultsRef.current = sessionResults;
-  const sessionXPRef = useRef(sessionXP);
-  sessionXPRef.current = sessionXP;
-  const streakRef = useRef(streak);
-  streakRef.current = streak;
-  const topicHistoryRef = useRef(topicHistory);
-  topicHistoryRef.current = topicHistory;
-  const sessionMasteryRef = useRef(sessionMastery);
-  sessionMasteryRef.current = sessionMastery;
+  // Ref that always holds the latest saved state (updated after every answer)
+  const lastSavedStateRef = useRef(null);
 
-  const finishSession = () => {
-    const currentResults = sessionResultsRef.current;
-    const currentXP = sessionXPRef.current;
-    const currentStreak = streakRef.current;
-    const currentTopicHistory = topicHistoryRef.current;
-    const currentMastery = sessionMasteryRef.current;
+  // The actual finish logic — takes all values as arguments, no closures needed
+  const doFinish = (results, xp, currentStreak, history, mastery) => {
+    const totalCorrect = results.filter(r => r.correct).length;
+    const totalAttempted = results.length;
 
-    const totalCorrect = currentResults.filter(r => r.correct).length;
-    const totalAttempted = currentResults.length;
-
-    // Update session in Supabase
     updateSession(sessionId, {
       ended_at: new Date().toISOString(),
       problems_attempted: totalAttempted,
       problems_correct: totalCorrect,
-      xp_earned: currentXP,
-      streak_high: Math.max(currentStreak, ...(currentResults.map(() => 0))),
-      mastery_snapshot: currentMastery,
-      topics_covered: [...new Set(currentResults.map(r => r.topic))],
+      xp_earned: xp,
+      streak_high: Math.max(currentStreak, ...(results.map(() => 0))),
+      mastery_snapshot: mastery,
+      topics_covered: [...new Set(results.map(r => r.topic))],
     }).catch(() => {});
 
     onComplete({
-      sessionResults: currentResults,
-      sessionXP: currentXP,
+      sessionResults: results,
+      sessionXP: xp,
       streak: currentStreak,
-      topicHistory: currentTopicHistory,
-      sessionMastery: currentMastery,
+      topicHistory: history,
+      sessionMastery: mastery,
       totalCorrect,
       totalAttempted,
       elapsed: Date.now() - startTime,
@@ -908,7 +904,7 @@ function SessionScreen({ profile, mastery, onComplete, resumeSession }) {
     const bestStrk = Math.max(newStreak, ...(newResults.map(() => 0)));
     const topicsCovered = [...new Set(newResults.map(r => r.topic))];
     const updatedMastery = masteryChange ? { ...sessionMastery, [currentProblem.topic]: masteryChange } : sessionMastery;
-    saveSessionState(sessionId, {
+    const savedState = {
       problemIndex: nextIndex,
       correctCount: newResults.filter(r => r.correct).length,
       sessionXP: newSessionXP,
@@ -924,11 +920,16 @@ function SessionScreen({ profile, mastery, onComplete, resumeSession }) {
       bestHardStreak: bestHardStreakRef.current,
       hadComeback: hadComebackRef.current,
       lastWasWrong: lastWasWrongRef.current,
-    }).catch(() => {});
+    };
+    lastSavedStateRef.current = savedState;
+    saveSessionState(sessionId, savedState).catch(() => {});
 
-    // Next problem or finish
+    // Next problem or finish — pass computed values directly (no stale closures)
     if (nextIndex >= SESSION_LIMIT_PROBLEMS || Date.now() - startTime >= SESSION_LIMIT_MS) {
-      setTimeout(finishSession, 1000);
+      if (!finishedRef.current) {
+        finishedRef.current = true;
+        setTimeout(() => doFinish(newResults, newSessionXP, newStreak, newHistory, updatedMastery), 1000);
+      }
     } else {
       setProblemIndex(nextIndex);
       setTimeout(generateNext, 800);
