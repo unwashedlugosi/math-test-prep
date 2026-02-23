@@ -957,7 +957,7 @@ export function generateDiagnostic() {
     'simplify', 'add-fractions', 'subtract-fractions',
     'add-mixed', 'subtract-mixed', 'estimate', 'equivalent',
     'word-add', 'word-subtract', 'word-multistep',
-    'word-compare', 'word-convert'
+    'word-compare'
   ];
   const problems = [];
   for (const topic of topics) {
@@ -990,7 +990,7 @@ export function generateFinalBoss() {
   }
 
   // 9 word problems (hard)
-  const wordTopics = ['word-add', 'word-subtract', 'word-multistep', 'word-multistep', 'word-compare', 'word-convert', 'word-add', 'word-subtract', 'word-multistep'];
+  const wordTopics = ['word-add', 'word-subtract', 'word-multistep', 'word-multistep', 'word-compare', 'word-add', 'word-subtract', 'word-multistep', 'word-compare'];
   for (const t of wordTopics) {
     problems.push(generateProblem(t, true));
   }
@@ -1075,7 +1075,7 @@ export function calculateMastery(results, confidence) {
 export const TOPIC_GROUPS = {
   'Computation': ['simplify', 'add-fractions', 'subtract-fractions', 'add-mixed', 'subtract-mixed'],
   'Concepts': ['estimate', 'equivalent'],
-  'Word Problems': ['word-add', 'word-subtract', 'word-multistep', 'word-compare', 'word-convert'],
+  'Word Problems': ['word-add', 'word-subtract', 'word-multistep', 'word-compare'],
 };
 
 export function getWeakTopics(mastery) {
@@ -1195,8 +1195,11 @@ export function checkSlidingMastery(topicHistory, topic) {
 
 // ===== WEIGHTED TOPIC SELECTION =====
 
+// Topics that require multiplication/division — not in Chapter 8
+const EXCLUDED_TOPICS = new Set(['word-convert']);
+
 export function selectSessionTopic(mastery, topicHistory, recentTopics = []) {
-  const allTopics = Object.keys(TOPICS);
+  const allTopics = Object.keys(TOPICS).filter(t => !EXCLUDED_TOPICS.has(t));
   const weights = {};
 
   for (const topic of allTopics) {
