@@ -252,6 +252,90 @@ export async function loadSummary() {
   }
 }
 
+// ===== PARENT REPORT (Carrier Pigeon) =====
+
+const CP_API = 'https://carrier-pigeon-api.vercel.app/api/send-note';
+const CP_KEY = 'cp-a8f2e4d7b1c93f56';
+
+const TOPIC_NAMES = {
+  'add-fractions': 'Adding Fractions',
+  'subtract-fractions': 'Subtracting Fractions',
+  'add-mixed': 'Adding Mixed Numbers',
+  'subtract-mixed': 'Subtracting Mixed Numbers',
+  'simplify': 'Simplifying',
+  'equivalent': 'Equivalent Fractions',
+  'estimate': 'Estimating',
+  'word-add': 'Word Problems (add)',
+  'word-subtract': 'Word Problems (subtract)',
+  'word-compare': 'Word Problems (compare)',
+  'word-convert': 'Word Problems (convert)',
+  'word-multistep': 'Word Problems (multi-step)',
+};
+
+export async function sendParentReport(sessionData, profile) {
+  try {
+    const { sessionResults, sessionXP, totalCorrect, totalAttempted, elapsed } = sessionData;
+    const pct = totalAttempted > 0 ? Math.round(totalCorrect / totalAttempted * 100) : 0;
+    const mins = Math.floor(elapsed / 60000);
+    const secs = Math.floor((elapsed % 60000) / 1000);
+
+    // Topic breakdown
+    const topicStats = {};
+    for (const r of sessionResults) {
+      if (!topicStats[r.topic]) topicStats[r.topic] = { correct: 0, total: 0, retries: 0 };
+      topicStats[r.topic].total++;
+      if (r.correct) topicStats[r.topic].correct++;
+      if (!r.first_try) topicStats[r.topic].retries++;
+    }
+
+    let lines = [];
+    lines.push(`MAX SESSION REPORT`);
+    lines.push('');
+    lines.push(`${totalCorrect}/${totalAttempted} correct (${pct}%) in ${mins}:${secs.toString().padStart(2, '0')}`);
+    lines.push(`+${sessionXP} XP this session | ${profile.total_xp || 0} XP total | Level ${profile.level || 1}`);
+    lines.push('');
+
+    // Per-topic results
+    for (const [topic, stats] of Object.entries(topicStats)) {
+      const name = TOPIC_NAMES[topic] || topic;
+      let line = `- ${name}: ${stats.correct}/${stats.total}`;
+      if (stats.retries > 0) line += ` (${stats.retries} needed retry)`;
+      lines.push(line);
+    }
+
+    // Highlights
+    const perfect = sessionResults.filter(r => r.correct && r.first_try);
+    const hardCorrect = sessionResults.filter(r => r.correct && r.difficulty >= 2);
+    if (pct === 100) {
+      lines.push('');
+      lines.push('Perfect session!');
+    }
+    if (hardCorrect.length > 0) {
+      lines.push(`Got ${hardCorrect.length} hard-difficulty problem${hardCorrect.length > 1 ? 's' : ''} right.`);
+    }
+
+    // Struggles
+    const struggled = Object.entries(topicStats).filter(([_, s]) => s.correct / s.total < 0.7);
+    if (struggled.length > 0) {
+      lines.push('');
+      lines.push('Needs more practice: ' + struggled.map(([t]) => TOPIC_NAMES[t] || t).join(', '));
+    }
+
+    const text = lines.join('\n');
+
+    await fetch(CP_API, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${CP_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tags: ['math-test-prep', '_src:claude'], text }),
+    });
+  } catch (e) {
+    console.error('Parent report failed:', e);
+  }
+}
+
 export async function saveSessionResult(sessionType, topic, correct, total, confidence = []) {
   const data = {
     student_name: STUDENT,

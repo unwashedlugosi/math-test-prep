@@ -11,7 +11,7 @@ import {
 import {
   saveSummary, loadSummary, saveSessionResult,
   loadProfile, saveProfile, createSession, updateSession, saveProblemResult, flushWriteQueue,
-  loadActiveSession, saveSessionState,
+  loadActiveSession, saveSessionState, sendParentReport,
 } from './supabase';
 import './App.css';
 
@@ -1449,6 +1449,12 @@ export default function App() {
 
     // Flush any queued writes
     flushWriteQueue().catch(() => {});
+
+    // Send parent report via Carrier Pigeon
+    setProfile(current => {
+      sendParentReport(data, current).catch(() => {});
+      return current; // no change, just reading current value
+    });
   }, []);
 
   const handleFinalBossComplete = useCallback((correct, total, elapsed) => {
