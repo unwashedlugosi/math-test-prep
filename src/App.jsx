@@ -936,7 +936,7 @@ function SessionScreen({ profile, mastery, onComplete, resumeSession }) {
         <div className="session-header-top">
           <SessionTimer startTime={startTime} limitMs={SESSION_LIMIT_MS} />
           <StreakDisplay streak={streak} />
-          <div className="session-xp-display">+{sessionXP} XP</div>
+          <div className="session-xp-display">{(profile.total_xp || 0) + sessionXP} XP</div>
         </div>
         <div className="progress-bar-container">
           <div className="progress-label">
