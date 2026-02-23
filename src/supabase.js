@@ -26,37 +26,49 @@ function clearWriteQueue() {
   localStorage.setItem(WRITE_QUEUE_KEY, '[]');
 }
 
-export async function flushWriteQueue() {
-  const queue = getWriteQueue();
-  if (queue.length === 0) return;
+let _flushing = false;
 
-  const remaining = [];
-  for (const op of queue) {
-    try {
-      if (op.type === 'upsert-profile') {
-        const { error } = await supabase.from('math_student_profile').upsert(op.data, { onConflict: 'student_name' });
-        if (error) { remaining.push(op); continue; }
-      } else if (op.type === 'insert-session') {
-        const { error } = await supabase.from('math_practice_sessions').insert(op.data);
-        if (error) { remaining.push(op); continue; }
-      } else if (op.type === 'update-session') {
-        const { error } = await supabase.from('math_practice_sessions').update(op.data).eq('id', op.id);
-        if (error) { remaining.push(op); continue; }
-      } else if (op.type === 'insert-problem') {
-        const { error } = await supabase.from('math_problem_results').insert(op.data);
-        if (error) { remaining.push(op); continue; }
-      } else if (op.type === 'upsert-summary') {
-        const { error } = await supabase.from('math_diagnostic_summary').upsert(op.data, { onConflict: 'student_name' });
-        if (error) { remaining.push(op); continue; }
-      } else if (op.type === 'insert-diagnostic') {
-        const { error } = await supabase.from('math_diagnostic_results').insert(op.data);
-        if (error) { remaining.push(op); continue; }
+export async function flushWriteQueue() {
+  if (_flushing) return; // prevent concurrent flushes
+  _flushing = true;
+
+  try {
+    const queue = getWriteQueue();
+    if (queue.length === 0) return;
+
+    const remaining = [];
+    for (const op of queue) {
+      try {
+        let error = null;
+        if (op.type === 'upsert-profile') {
+          ({ error } = await supabase.from('math_student_profile').upsert(op.data, { onConflict: 'student_name' }));
+        } else if (op.type === 'insert-session') {
+          ({ error } = await supabase.from('math_practice_sessions').upsert(op.data, { onConflict: 'id' }));
+        } else if (op.type === 'update-session') {
+          ({ error } = await supabase.from('math_practice_sessions').update(op.data).eq('id', op.id));
+        } else if (op.type === 'insert-problem') {
+          ({ error } = await supabase.from('math_problem_results').upsert(op.data, { onConflict: 'id' }));
+        } else if (op.type === 'upsert-summary') {
+          ({ error } = await supabase.from('math_diagnostic_summary').upsert(op.data, { onConflict: 'student_name' }));
+        } else if (op.type === 'insert-diagnostic') {
+          ({ error } = await supabase.from('math_diagnostic_results').insert(op.data));
+        }
+        // 409 = already exists, treat as success
+        if (error && error.code !== '23505') {
+          remaining.push(op);
+        }
+      } catch {
+        remaining.push(op);
       }
-    } catch {
-      remaining.push(op);
     }
+
+    // Re-read queue to preserve items added during flush
+    const current = getWriteQueue();
+    const newItems = current.slice(queue.length);
+    localStorage.setItem(WRITE_QUEUE_KEY, JSON.stringify([...remaining, ...newItems]));
+  } finally {
+    _flushing = false;
   }
-  localStorage.setItem(WRITE_QUEUE_KEY, JSON.stringify(remaining));
 }
 
 // Try to flush queue on load and periodically
@@ -150,6 +162,7 @@ export async function updateSession(sessionId, updates) {
 
 export async function saveProblemResult(result) {
   const data = {
+    id: crypto.randomUUID(),
     session_id: result.session_id,
     student_name: STUDENT,
     topic: result.topic,
