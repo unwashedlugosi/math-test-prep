@@ -779,27 +779,45 @@ function SessionScreen({ profile, mastery, onComplete, resumeSession }) {
     setRecentTopics(prev => [...prev.slice(-2), topic]);
   };
 
+  // Use refs to avoid stale closure in finishSession (called via setTimeout)
+  const sessionResultsRef = useRef(sessionResults);
+  sessionResultsRef.current = sessionResults;
+  const sessionXPRef = useRef(sessionXP);
+  sessionXPRef.current = sessionXP;
+  const streakRef = useRef(streak);
+  streakRef.current = streak;
+  const topicHistoryRef = useRef(topicHistory);
+  topicHistoryRef.current = topicHistory;
+  const sessionMasteryRef = useRef(sessionMastery);
+  sessionMasteryRef.current = sessionMastery;
+
   const finishSession = () => {
-    const totalCorrect = sessionResults.filter(r => r.correct).length;
-    const totalAttempted = sessionResults.length;
+    const currentResults = sessionResultsRef.current;
+    const currentXP = sessionXPRef.current;
+    const currentStreak = streakRef.current;
+    const currentTopicHistory = topicHistoryRef.current;
+    const currentMastery = sessionMasteryRef.current;
+
+    const totalCorrect = currentResults.filter(r => r.correct).length;
+    const totalAttempted = currentResults.length;
 
     // Update session in Supabase
     updateSession(sessionId, {
       ended_at: new Date().toISOString(),
       problems_attempted: totalAttempted,
       problems_correct: totalCorrect,
-      xp_earned: sessionXP,
-      streak_high: Math.max(streak, ...(sessionResults.map(() => 0))),
-      mastery_snapshot: sessionMastery,
-      topics_covered: [...new Set(sessionResults.map(r => r.topic))],
+      xp_earned: currentXP,
+      streak_high: Math.max(currentStreak, ...(currentResults.map(() => 0))),
+      mastery_snapshot: currentMastery,
+      topics_covered: [...new Set(currentResults.map(r => r.topic))],
     }).catch(() => {});
 
     onComplete({
-      sessionResults,
-      sessionXP,
-      streak,
-      topicHistory,
-      sessionMastery,
+      sessionResults: currentResults,
+      sessionXP: currentXP,
+      streak: currentStreak,
+      topicHistory: currentTopicHistory,
+      sessionMastery: currentMastery,
       totalCorrect,
       totalAttempted,
       elapsed: Date.now() - startTime,
