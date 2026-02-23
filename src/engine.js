@@ -1137,9 +1137,6 @@ export function calculateXP({ correct, difficulty, firstTry, timeMs, streak, rea
   // First-try bonus
   if (firstTry) base += 5;
 
-  // Speed bonus (under 30 seconds)
-  if (timeMs && timeMs < 30000) base += 3;
-
   // Streak multiplier
   if (streak >= 5) base = Math.round(base * 2.0);
   else if (streak >= 3) base = Math.round(base * 1.5);
@@ -1245,7 +1242,7 @@ export const BADGE_DEFS = {
   'streak-legend':    { name: 'Streak Legend',      icon: '🔥', desc: 'Get 10 correct in a row' },
   'comeback-kid':     { name: 'Comeback Kid',       icon: '💪', desc: 'Get a question right after getting one wrong' },
   'perfect-session':  { name: 'Perfect Session',    icon: '💎', desc: 'Get every question right in a session' },
-  'speed-demon':      { name: 'Speed Demon',        icon: '⏱️', desc: 'Answer 5 questions in under 15 seconds each' },
+  'steady-hand':      { name: 'Steady Hand',         icon: '🎯', desc: 'Get 5 correct in a row on hard problems' },
   'level-up':         { name: 'Level Up',            icon: '📈', desc: 'Reach Level 3' },
   'centurion':        { name: 'Centurion',           icon: '💯', desc: 'Earn 100 XP in one session' },
 };
@@ -1259,7 +1256,7 @@ for (const [key, info] of Object.entries(TOPICS)) {
   };
 }
 
-export function checkNewBadges(existingBadges, { streak, sessionXP, sessionPerfect, level, masteredTopics, speedAnswers, hadComeback, sessionsCompleted }) {
+export function checkNewBadges(existingBadges, { streak, sessionXP, sessionPerfect, level, masteredTopics, hardCorrectStreak, hadComeback, sessionsCompleted }) {
   const earned = [];
   const has = new Set(existingBadges || []);
 
@@ -1268,7 +1265,7 @@ export function checkNewBadges(existingBadges, { streak, sessionXP, sessionPerfe
   if (streak >= 10 && !has.has('streak-legend')) earned.push('streak-legend');
   if (hadComeback && !has.has('comeback-kid')) earned.push('comeback-kid');
   if (sessionPerfect && !has.has('perfect-session')) earned.push('perfect-session');
-  if (speedAnswers >= 5 && !has.has('speed-demon')) earned.push('speed-demon');
+  if (hardCorrectStreak >= 5 && !has.has('steady-hand')) earned.push('steady-hand');
   if (level >= 3 && !has.has('level-up')) earned.push('level-up');
   if (sessionXP >= 100 && !has.has('centurion')) earned.push('centurion');
 

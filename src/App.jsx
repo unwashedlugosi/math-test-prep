@@ -365,10 +365,9 @@ function SessionTimer({ startTime, limitMs }) {
   const remaining = Math.max(0, limitMs - elapsed);
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor((remaining % 60000) / 1000);
-  const isLow = remaining < 120000; // under 2 minutes
 
   return (
-    <div className={`session-timer ${isLow ? 'timer-low' : ''}`}>
+    <div className="session-timer">
       {minutes}:{seconds.toString().padStart(2, '0')}
     </div>
   );
@@ -729,7 +728,8 @@ function SessionScreen({ profile, mastery, onComplete }) {
   const [countdown, setCountdown] = useState(3);
   const [sessionStarted, setSessionStarted] = useState(false);
   const prevLevelRef = useRef(profile.level || 1);
-  const speedAnswersRef = useRef(0);
+  const hardCorrectStreakRef = useRef(0);
+  const bestHardStreakRef = useRef(0);
   const hadComebackRef = useRef(false);
   const lastWasWrongRef = useRef(false);
 
@@ -798,7 +798,7 @@ function SessionScreen({ profile, mastery, onComplete }) {
       totalCorrect,
       totalAttempted,
       elapsed: Date.now() - startTime,
-      speedAnswers: speedAnswersRef.current,
+      hardCorrectStreak: bestHardStreakRef.current,
       hadComeback: hadComebackRef.current,
     });
   };
@@ -813,9 +813,12 @@ function SessionScreen({ profile, mastery, onComplete }) {
     }
     lastWasWrongRef.current = !correct;
 
-    // Track speed answers
-    if (correct && timeMs < 15000) {
-      speedAnswersRef.current++;
+    // Track hard-problem correct streaks
+    if (correct && currentProblem.difficulty >= 2) {
+      hardCorrectStreakRef.current++;
+      bestHardStreakRef.current = Math.max(bestHardStreakRef.current, hardCorrectStreakRef.current);
+    } else if (!correct) {
+      hardCorrectStreakRef.current = 0;
     }
 
     const xp = calculateXP({
@@ -1326,7 +1329,7 @@ export default function App() {
   }, []);
 
   const handleSessionComplete = useCallback((data) => {
-    const { sessionXP, topicHistory, sessionMastery, totalCorrect, totalAttempted, streak, speedAnswers, hadComeback } = data;
+    const { sessionXP, topicHistory, sessionMastery, totalCorrect, totalAttempted, streak, hardCorrectStreak, hadComeback } = data;
 
     // Update profile
     setProfile(prev => {
@@ -1345,7 +1348,7 @@ export default function App() {
         sessionPerfect: totalCorrect === totalAttempted && totalAttempted > 0,
         level: newLevel.level,
         masteredTopics,
-        speedAnswers,
+        hardCorrectStreak,
         hadComeback,
         sessionsCompleted: newSessionsCompleted,
       });

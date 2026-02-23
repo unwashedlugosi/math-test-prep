@@ -373,15 +373,7 @@ body {
   min-width: 60px;
 }
 
-.timer-low {
-  color: var(--wrong);
-  animation: timerPulse 1s ease infinite;
-}
-
-@keyframes timerPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
+/* Timer stays calm — no urgency animations */
 
 /* ===== SESSION HEADER ===== */
 
