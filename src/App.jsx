@@ -1237,29 +1237,31 @@ export default function App() {
   const [profile, setProfile] = useState(defaultProfile);
   const [sessionData, setSessionData] = useState(null);
   const [resumeSession, setResumeSession] = useState(null);
+  const profileLoadedRef = useRef(false);
 
   // Check for saved progress on mount — try Supabase first, then localStorage
   useEffect(() => {
     async function init() {
-      // Load profile
+      // Load profile — cloud is source of truth, local is fallback
       const cloudProfile = await loadProfile();
-      if (cloudProfile) {
-        setProfile(cloudProfile);
-        saveLocalProfile(cloudProfile);
+      const localProfile = loadLocalProfile();
 
-        // If profile has mastery data (seeded from review packet), use it
-        if (cloudProfile.mastery && Object.keys(cloudProfile.mastery).length > 0) {
-          setMastery(cloudProfile.mastery);
-          setHasSaved(true);
-        }
+      // Pick whichever has more XP (prevents stale local overwriting cloud)
+      let bestProfile = null;
+      if (cloudProfile && localProfile) {
+        bestProfile = (cloudProfile.total_xp || 0) >= (localProfile.total_xp || 0)
+          ? cloudProfile : localProfile;
       } else {
-        const localProfile = loadLocalProfile();
-        if (localProfile) {
-          setProfile(localProfile);
-          if (localProfile.mastery && Object.keys(localProfile.mastery).length > 0) {
-            setMastery(localProfile.mastery);
-            setHasSaved(true);
-          }
+        bestProfile = cloudProfile || localProfile;
+      }
+
+      if (bestProfile) {
+        setProfile(bestProfile);
+        saveLocalProfile(bestProfile);
+
+        if (bestProfile.mastery && Object.keys(bestProfile.mastery).length > 0) {
+          setMastery(bestProfile.mastery);
+          setHasSaved(true);
         }
       }
 
@@ -1293,6 +1295,9 @@ export default function App() {
           setScreen('session');
         }
       } catch {}
+
+      // Now allow profile saves (init is done, won't overwrite cloud data)
+      profileLoadedRef.current = true;
     }
     init();
   }, []);
@@ -1305,8 +1310,9 @@ export default function App() {
     }
   }, [results, mastery, confidenceData]);
 
-  // Save profile whenever it changes
+  // Save profile whenever it changes (but NOT on initial load from Supabase)
   useEffect(() => {
+    if (!profileLoadedRef.current) return; // skip until init is done
     if (profile.total_xp > 0 || profile.sessions_completed > 0) {
       saveLocalProfile(profile);
       saveProfile(profile);
