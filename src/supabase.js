@@ -6,28 +6,176 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const STUDENT = 'max';
+const WRITE_QUEUE_KEY = 'math-prep-write-queue';
 
-// Save the full summary (results + mastery + confidence) to Supabase
-export async function saveSummary(results, mastery, confidence = {}, bossResults = null) {
+// ===== WRITE QUEUE (offline safety) =====
+
+function getWriteQueue() {
   try {
-    const { error } = await supabase
-      .from('math_diagnostic_summary')
-      .upsert({
-        student_name: STUDENT,
-        results,
-        mastery,
-        confidence,
-        boss_results: bossResults,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'student_name' });
+    return JSON.parse(localStorage.getItem(WRITE_QUEUE_KEY) || '[]');
+  } catch { return []; }
+}
 
-    if (error) console.error('Failed to save summary:', error);
-  } catch (e) {
-    console.error('Supabase save error:', e);
+function addToWriteQueue(operation) {
+  const queue = getWriteQueue();
+  queue.push({ ...operation, timestamp: Date.now() });
+  localStorage.setItem(WRITE_QUEUE_KEY, JSON.stringify(queue));
+}
+
+function clearWriteQueue() {
+  localStorage.setItem(WRITE_QUEUE_KEY, '[]');
+}
+
+export async function flushWriteQueue() {
+  const queue = getWriteQueue();
+  if (queue.length === 0) return;
+
+  const remaining = [];
+  for (const op of queue) {
+    try {
+      if (op.type === 'upsert-profile') {
+        const { error } = await supabase.from('math_student_profile').upsert(op.data, { onConflict: 'student_name' });
+        if (error) { remaining.push(op); continue; }
+      } else if (op.type === 'insert-session') {
+        const { error } = await supabase.from('math_practice_sessions').insert(op.data);
+        if (error) { remaining.push(op); continue; }
+      } else if (op.type === 'update-session') {
+        const { error } = await supabase.from('math_practice_sessions').update(op.data).eq('id', op.id);
+        if (error) { remaining.push(op); continue; }
+      } else if (op.type === 'insert-problem') {
+        const { error } = await supabase.from('math_problem_results').insert(op.data);
+        if (error) { remaining.push(op); continue; }
+      } else if (op.type === 'upsert-summary') {
+        const { error } = await supabase.from('math_diagnostic_summary').upsert(op.data, { onConflict: 'student_name' });
+        if (error) { remaining.push(op); continue; }
+      } else if (op.type === 'insert-diagnostic') {
+        const { error } = await supabase.from('math_diagnostic_results').insert(op.data);
+        if (error) { remaining.push(op); continue; }
+      }
+    } catch {
+      remaining.push(op);
+    }
+  }
+  localStorage.setItem(WRITE_QUEUE_KEY, JSON.stringify(remaining));
+}
+
+// Try to flush queue on load and periodically
+setTimeout(flushWriteQueue, 2000);
+setInterval(flushWriteQueue, 30000);
+window.addEventListener('online', () => setTimeout(flushWriteQueue, 1000));
+
+// ===== SAFE WRITE (localStorage first, then Supabase) =====
+
+async function safeWrite(operation) {
+  // Always queue first for safety
+  addToWriteQueue(operation);
+  // Then try to flush immediately
+  try {
+    await flushWriteQueue();
+  } catch {
+    // Queue will retry later
   }
 }
 
-// Load summary from Supabase
+// ===== STUDENT PROFILE =====
+
+export async function loadProfile() {
+  try {
+    const { data, error } = await supabase
+      .from('math_student_profile')
+      .select('*')
+      .eq('student_name', STUDENT)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('Failed to load profile:', error);
+      return null;
+    }
+    return data;
+  } catch (e) {
+    console.error('Profile load error:', e);
+    return null;
+  }
+}
+
+export async function saveProfile(profile) {
+  const data = {
+    student_name: STUDENT,
+    total_xp: profile.total_xp || 0,
+    level: profile.level || 1,
+    streak: profile.streak || 0,
+    best_streak: profile.best_streak || 0,
+    mastery: profile.mastery || {},
+    topic_history: profile.topic_history || {},
+    badges: profile.badges || [],
+    sessions_completed: profile.sessions_completed || 0,
+    problems_solved: profile.problems_solved || 0,
+    updated_at: new Date().toISOString(),
+  };
+  await safeWrite({ type: 'upsert-profile', data });
+}
+
+// ===== PRACTICE SESSIONS =====
+
+export async function createSession(sessionType = 'practice') {
+  const id = crypto.randomUUID();
+  const data = {
+    id,
+    student_name: STUDENT,
+    session_type: sessionType,
+    started_at: new Date().toISOString(),
+    problems_attempted: 0,
+    problems_correct: 0,
+    xp_earned: 0,
+    streak_high: 0,
+    mastery_snapshot: {},
+    topics_covered: [],
+  };
+  await safeWrite({ type: 'insert-session', data });
+  return id;
+}
+
+export async function updateSession(sessionId, updates) {
+  await safeWrite({
+    type: 'update-session',
+    id: sessionId,
+    data: {
+      ...updates,
+      ended_at: updates.ended_at || undefined,
+    },
+  });
+}
+
+// ===== PROBLEM RESULTS =====
+
+export async function saveProblemResult(result) {
+  const data = {
+    session_id: result.session_id,
+    student_name: STUDENT,
+    topic: result.topic,
+    difficulty: result.difficulty || 1,
+    correct: result.correct,
+    first_try: result.first_try !== false,
+    time_spent_ms: result.time_spent_ms || null,
+    xp_awarded: result.xp_awarded || 0,
+  };
+  await safeWrite({ type: 'insert-problem', data });
+}
+
+// ===== LEGACY: Diagnostic Summary (keep backward compatibility) =====
+
+export async function saveSummary(results, mastery, confidence = {}, bossResults = null) {
+  const data = {
+    student_name: STUDENT,
+    results,
+    mastery,
+    confidence,
+    boss_results: bossResults,
+    updated_at: new Date().toISOString(),
+  };
+  await safeWrite({ type: 'upsert-summary', data });
+}
+
 export async function loadSummary() {
   try {
     const { data, error } = await supabase
@@ -47,22 +195,14 @@ export async function loadSummary() {
   }
 }
 
-// Save individual session results (for detailed history)
 export async function saveSessionResult(sessionType, topic, correct, total, confidence = []) {
-  try {
-    const { error } = await supabase
-      .from('math_diagnostic_results')
-      .insert({
-        student_name: STUDENT,
-        session_type: sessionType,
-        topic,
-        correct,
-        total,
-        confidence,
-      });
-
-    if (error) console.error('Failed to save session result:', error);
-  } catch (e) {
-    console.error('Supabase session save error:', e);
-  }
+  const data = {
+    student_name: STUDENT,
+    session_type: sessionType,
+    topic,
+    correct,
+    total,
+    confidence,
+  };
+  await safeWrite({ type: 'insert-diagnostic', data });
 }

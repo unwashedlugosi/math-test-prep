@@ -1090,3 +1090,242 @@ export function isFinalBossReady(mastery) {
   const mastered = tested.filter(v => v === 'mastered').length;
   return mastered / tested.length >= 0.7; // 70% mastered
 }
+
+// ===== XP & LEVELS SYSTEM =====
+
+export const LEVELS = [
+  { level: 1, name: 'Rookie',       xpNeeded: 0 },
+  { level: 2, name: 'Apprentice',   xpNeeded: 50 },
+  { level: 3, name: 'Solver',       xpNeeded: 150 },
+  { level: 4, name: 'Pro',          xpNeeded: 300 },
+  { level: 5, name: 'Expert',       xpNeeded: 500 },
+  { level: 6, name: 'Master',       xpNeeded: 800 },
+  { level: 7, name: 'Champion',     xpNeeded: 1200 },
+  { level: 8, name: 'Legend',        xpNeeded: 1800 },
+  { level: 9, name: 'World Expert', xpNeeded: 2500 },
+];
+
+export function getLevelForXP(totalXP) {
+  let current = LEVELS[0];
+  for (const l of LEVELS) {
+    if (totalXP >= l.xpNeeded) current = l;
+    else break;
+  }
+  return current;
+}
+
+export function getXPProgress(totalXP) {
+  const current = getLevelForXP(totalXP);
+  const nextIdx = LEVELS.findIndex(l => l.level === current.level) + 1;
+  if (nextIdx >= LEVELS.length) return { current, next: null, progress: 1, xpInLevel: 0, xpForLevel: 0 };
+  const next = LEVELS[nextIdx];
+  const xpInLevel = totalXP - current.xpNeeded;
+  const xpForLevel = next.xpNeeded - current.xpNeeded;
+  return { current, next, progress: xpInLevel / xpForLevel, xpInLevel, xpForLevel };
+}
+
+export function calculateXP({ correct, difficulty, firstTry, timeMs, streak, readExplanation }) {
+  if (!correct) {
+    return readExplanation ? 2 : 0;
+  }
+
+  let base = 10;
+
+  // Difficulty multiplier
+  if (difficulty >= 2) base = Math.round(base * 1.5);
+
+  // First-try bonus
+  if (firstTry) base += 5;
+
+  // Speed bonus (under 30 seconds)
+  if (timeMs && timeMs < 30000) base += 3;
+
+  // Streak multiplier
+  if (streak >= 5) base = Math.round(base * 2.0);
+  else if (streak >= 3) base = Math.round(base * 1.5);
+  else if (streak >= 2) base = Math.round(base * 1.2);
+
+  return base;
+}
+
+// ===== STREAK MESSAGES =====
+
+export function getStreakMessage(streak) {
+  if (streak === 3) return 'Hat trick!';
+  if (streak === 5) return 'On fire!';
+  if (streak === 8) return 'Unstoppable!';
+  if (streak === 10) return 'LEGENDARY!';
+  return null;
+}
+
+// ===== ADAPTIVE DIFFICULTY =====
+
+// Track rolling window of last N answers per topic
+export function updateTopicHistory(topicHistory, topic, correct, difficulty) {
+  const h = { ...topicHistory };
+  if (!h[topic]) h[topic] = [];
+  h[topic] = [...h[topic], { correct, difficulty, t: Date.now() }].slice(-8); // keep last 8
+  return h;
+}
+
+export function getTopicAccuracy(topicHistory, topic, windowSize = 5) {
+  const entries = (topicHistory[topic] || []).slice(-windowSize);
+  if (entries.length === 0) return 0.5; // default to middle
+  const correct = entries.filter(e => e.correct).length;
+  return correct / entries.length;
+}
+
+export function shouldBeHard(topicHistory, topic) {
+  const acc = getTopicAccuracy(topicHistory, topic, 5);
+  if (acc >= 0.8) return true;
+  if (acc >= 0.4) return Math.random() < 0.3; // 30% chance of hard
+  return false;
+}
+
+// Sliding-window mastery check
+export function checkSlidingMastery(topicHistory, topic) {
+  const entries = (topicHistory[topic] || []);
+  if (entries.length < 8) return null; // not enough data
+  const last8 = entries.slice(-8);
+  const correct = last8.filter(e => e.correct).length;
+  const hasHard = last8.some(e => e.difficulty >= 2);
+  const acc = correct / last8.length;
+
+  if (acc >= 0.8 && hasHard) return 'mastered';
+  if (acc < 0.5) return 'needs-work';
+  return null; // no change
+}
+
+// ===== WEIGHTED TOPIC SELECTION =====
+
+export function selectSessionTopic(mastery, topicHistory, recentTopics = []) {
+  const allTopics = Object.keys(TOPICS);
+  const weights = {};
+
+  for (const topic of allTopics) {
+    const status = mastery[topic] || 'untested';
+    if (status === 'needs-work') weights[topic] = 5;
+    else if (status === 'learning') weights[topic] = 3;
+    else if (status === 'untested') weights[topic] = 2;
+    else weights[topic] = 1; // mastered
+  }
+
+  // Prevent same topic 3x in a row
+  if (recentTopics.length >= 2) {
+    const last2 = recentTopics.slice(-2);
+    if (last2[0] === last2[1]) {
+      weights[last2[0]] = 0;
+    }
+  }
+
+  // Weighted random selection
+  const totalWeight = Object.values(weights).reduce((s, w) => s + w, 0);
+  if (totalWeight === 0) return pick(allTopics);
+
+  let r = Math.random() * totalWeight;
+  for (const [topic, w] of Object.entries(weights)) {
+    r -= w;
+    if (r <= 0) return topic;
+  }
+  return allTopics[0];
+}
+
+// ===== SESSION PROBLEM GENERATOR =====
+
+export function generateSessionProblem(topic, topicHistory) {
+  const hard = shouldBeHard(topicHistory, topic);
+  return generateProblem(topic, hard);
+}
+
+// ===== BADGES =====
+
+export const BADGE_DEFS = {
+  'first-steps':      { name: 'First Steps',      icon: '👟', desc: 'Complete your first practice session' },
+  'quick-learner':    { name: 'Quick Learner',     icon: '⚡', desc: 'Get 5 correct in a row' },
+  'streak-legend':    { name: 'Streak Legend',      icon: '🔥', desc: 'Get 10 correct in a row' },
+  'comeback-kid':     { name: 'Comeback Kid',       icon: '💪', desc: 'Get a question right after getting one wrong' },
+  'perfect-session':  { name: 'Perfect Session',    icon: '💎', desc: 'Get every question right in a session' },
+  'speed-demon':      { name: 'Speed Demon',        icon: '⏱️', desc: 'Answer 5 questions in under 15 seconds each' },
+  'level-up':         { name: 'Level Up',            icon: '📈', desc: 'Reach Level 3' },
+  'centurion':        { name: 'Centurion',           icon: '💯', desc: 'Earn 100 XP in one session' },
+};
+
+// Per-topic mastery badges
+for (const [key, info] of Object.entries(TOPICS)) {
+  BADGE_DEFS[`master-${key}`] = {
+    name: `${info.name} Master`,
+    icon: '🏅',
+    desc: `Master ${info.name}`,
+  };
+}
+
+export function checkNewBadges(existingBadges, { streak, sessionXP, sessionPerfect, level, masteredTopics, speedAnswers, hadComeback, sessionsCompleted }) {
+  const earned = [];
+  const has = new Set(existingBadges || []);
+
+  if (sessionsCompleted >= 1 && !has.has('first-steps')) earned.push('first-steps');
+  if (streak >= 5 && !has.has('quick-learner')) earned.push('quick-learner');
+  if (streak >= 10 && !has.has('streak-legend')) earned.push('streak-legend');
+  if (hadComeback && !has.has('comeback-kid')) earned.push('comeback-kid');
+  if (sessionPerfect && !has.has('perfect-session')) earned.push('perfect-session');
+  if (speedAnswers >= 5 && !has.has('speed-demon')) earned.push('speed-demon');
+  if (level >= 3 && !has.has('level-up')) earned.push('level-up');
+  if (sessionXP >= 100 && !has.has('centurion')) earned.push('centurion');
+
+  for (const topic of (masteredTopics || [])) {
+    const badgeKey = `master-${topic}`;
+    if (!has.has(badgeKey)) earned.push(badgeKey);
+  }
+
+  return earned;
+}
+
+// ===== SESSION SUMMARY GENERATOR =====
+
+export function generateSessionFeedback(results, topicHistory, mastery) {
+  const feedback = [];
+  const topicStats = {};
+
+  for (const r of results) {
+    if (!topicStats[r.topic]) topicStats[r.topic] = { correct: 0, total: 0 };
+    topicStats[r.topic].total++;
+    if (r.correct) topicStats[r.topic].correct++;
+  }
+
+  // Find improved and struggling topics
+  const improved = [];
+  const struggling = [];
+
+  for (const [topic, stats] of Object.entries(topicStats)) {
+    const pct = stats.correct / stats.total;
+    if (pct >= 0.7) improved.push(topic);
+    else struggling.push(topic);
+  }
+
+  if (improved.length > 0) {
+    const names = improved.map(t => TOPICS[t]?.name || t);
+    feedback.push(`${names.join(' and ')} looking good!`);
+  }
+
+  if (struggling.length > 0) {
+    const names = struggling.map(t => TOPICS[t]?.name || t);
+    // Add specific tips for common problem areas
+    for (const topic of struggling) {
+      if (topic === 'add-fractions' || topic === 'subtract-fractions') {
+        feedback.push(`${TOPICS[topic].name} still needs work. Focus on finding the LCD before adding/subtracting.`);
+      } else if (topic === 'subtract-mixed') {
+        feedback.push(`${TOPICS[topic].name} needs more practice. Watch out for borrowing — if the fraction you're subtracting is bigger, borrow 1 from the whole number first.`);
+      } else if (topic.startsWith('word-')) {
+        feedback.push(`${TOPICS[topic].name}: Read carefully to figure out the operation first, then take it step by step.`);
+      } else {
+        feedback.push(`${TOPICS[topic].name} could use more reps.`);
+      }
+    }
+  }
+
+  if (feedback.length === 0) {
+    feedback.push('Solid session! Keep building those reps.');
+  }
+
+  return feedback;
+}
