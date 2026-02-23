@@ -1217,12 +1217,24 @@ export default function App() {
       if (cloudProfile) {
         setProfile(cloudProfile);
         saveLocalProfile(cloudProfile);
+
+        // If profile has mastery data (seeded from review packet), use it
+        if (cloudProfile.mastery && Object.keys(cloudProfile.mastery).length > 0) {
+          setMastery(cloudProfile.mastery);
+          setHasSaved(true);
+        }
       } else {
         const localProfile = loadLocalProfile();
-        if (localProfile) setProfile(localProfile);
+        if (localProfile) {
+          setProfile(localProfile);
+          if (localProfile.mastery && Object.keys(localProfile.mastery).length > 0) {
+            setMastery(localProfile.mastery);
+            setHasSaved(true);
+          }
+        }
       }
 
-      // Try Supabase first for diagnostic data
+      // Try Supabase for diagnostic data (adds cumulative results on top of profile mastery)
       const cloud = await loadSummary();
       if (cloud && cloud.results && Object.values(cloud.results).some(r => r.total > 0)) {
         setResults(cloud.results);
@@ -1235,15 +1247,13 @@ export default function App() {
 
       // Fall back to localStorage
       const local = loadProgress();
-      if (local) {
+      if (local && Object.values(local.results || {}).some(r => r.total > 0)) {
         setHasSaved(true);
-        if (Object.values(local.results || {}).some(r => r.total > 0)) {
-          const m = local.mastery || calculateMastery(local.results);
-          setResults(local.results);
-          setMastery(m);
-          setConfidenceData(local.confidence || {});
-          saveSummary(local.results, m, local.confidence || {});
-        }
+        const m = local.mastery || calculateMastery(local.results);
+        setResults(local.results);
+        setMastery(m);
+        setConfidenceData(local.confidence || {});
+        saveSummary(local.results, m, local.confidence || {});
       }
     }
     init();
