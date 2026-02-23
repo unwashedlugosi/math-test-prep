@@ -4,6 +4,7 @@ import {
   checkProblemAnswer, calculateMastery, getWeakTopics, isFinalBossReady,
   formatFracObj, TOPICS, TOPIC_GROUPS, parseAnswer
 } from './engine';
+import { saveSummary, loadSummary, saveSessionResult } from './supabase';
 import './App.css';
 
 const STORAGE_KEY = 'math-test-prep-v1';
@@ -732,27 +733,57 @@ export default function App() {
   const [drillResult, setDrillResult] = useState(null);
   const [bossResult, setBossResult] = useState(null);
   const [hasSaved, setHasSaved] = useState(false);
+  const [confidenceData, setConfidenceData] = useState({});
 
-  // Check for saved progress on mount
+  // Check for saved progress on mount — try Supabase first, then localStorage
   useEffect(() => {
-    const saved = loadProgress();
-    if (saved) {
-      setHasSaved(true);
+    async function init() {
+      // Try Supabase first
+      const cloud = await loadSummary();
+      if (cloud && cloud.results && Object.values(cloud.results).some(r => r.total > 0)) {
+        setResults(cloud.results);
+        setMastery(cloud.mastery || calculateMastery(cloud.results));
+        setConfidenceData(cloud.confidence || {});
+        setHasSaved(true);
+        // Also update localStorage to keep in sync
+        saveProgress({ results: cloud.results, mastery: cloud.mastery, confidence: cloud.confidence });
+        return;
+      }
+
+      // Fall back to localStorage
+      const local = loadProgress();
+      if (local) {
+        setHasSaved(true);
+        // If localStorage has data but Supabase doesn't, sync it up
+        if (Object.values(local.results || {}).some(r => r.total > 0)) {
+          const m = local.mastery || calculateMastery(local.results);
+          saveSummary(local.results, m, local.confidence || {});
+        }
+      }
     }
+    init();
   }, []);
 
-  // Save progress whenever results change
+  // Save progress whenever results change — to both localStorage AND Supabase
   useEffect(() => {
     if (Object.values(results).some(r => r.total > 0)) {
-      saveProgress({ results, mastery });
+      saveProgress({ results, mastery, confidence: confidenceData });
+      saveSummary(results, mastery, confidenceData);
     }
-  }, [results, mastery]);
+  }, [results, mastery, confidenceData]);
 
-  const handleDiagnosticComplete = useCallback((diagnosticResults, confidenceData) => {
+  const handleDiagnosticComplete = useCallback((diagnosticResults, confData) => {
     setResults(diagnosticResults);
-    const m = calculateMastery(diagnosticResults, confidenceData);
+    setConfidenceData(confData);
+    const m = calculateMastery(diagnosticResults, confData);
     setMastery(m);
     setScreen('mastery');
+    // Save per-topic diagnostic results to Supabase for history
+    for (const [topic, data] of Object.entries(diagnosticResults)) {
+      if (data.total > 0) {
+        saveSessionResult('diagnostic', topic, data.correct, data.total, confData[topic] || []);
+      }
+    }
   }, []);
 
   const handleDrill = useCallback((topic) => {
@@ -762,6 +793,8 @@ export default function App() {
   }, []);
 
   const handleDrillComplete = useCallback((correct, total) => {
+    // Save drill session to history
+    saveSessionResult('drill', currentTopic, correct, total);
     // Update results
     setResults(prev => {
       const updated = { ...prev };
@@ -778,15 +811,30 @@ export default function App() {
   }, [currentTopic]);
 
   const handleFinalBossComplete = useCallback((correct, total, elapsed) => {
-    setBossResult({ correct, total, elapsed });
+    const bossData = { correct, total, elapsed };
+    setBossResult(bossData);
     setScreen('boss-results');
-  }, []);
+    // Save boss result to Supabase
+    saveSessionResult('boss', 'all', correct, total);
+    saveSummary(results, mastery, confidenceData, bossData);
+  }, [results, mastery, confidenceData]);
 
-  const handleResume = useCallback(() => {
+  const handleResume = useCallback(async () => {
+    // Try Supabase first
+    const cloud = await loadSummary();
+    if (cloud && cloud.results && Object.values(cloud.results).some(r => r.total > 0)) {
+      setResults(cloud.results);
+      setMastery(cloud.mastery || calculateMastery(cloud.results));
+      setConfidenceData(cloud.confidence || {});
+      setScreen('mastery');
+      return;
+    }
+    // Fall back to localStorage
     const saved = loadProgress();
     if (saved) {
       setResults(saved.results);
       setMastery(saved.mastery || calculateMastery(saved.results));
+      setConfidenceData(saved.confidence || {});
       setScreen('mastery');
     }
   }, []);
