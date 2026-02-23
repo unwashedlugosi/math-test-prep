@@ -129,8 +129,8 @@ export async function saveProfile(profile) {
 
 // ===== PRACTICE SESSIONS =====
 
-export async function createSession(sessionType = 'practice') {
-  const id = crypto.randomUUID();
+export async function createSession(sessionType = 'practice', existingId = null) {
+  const id = existingId || crypto.randomUUID();
   const data = {
     id,
     student_name: STUDENT,
@@ -173,6 +173,50 @@ export async function saveProblemResult(result) {
     xp_awarded: result.xp_awarded || 0,
   };
   await safeWrite({ type: 'insert-problem', data });
+}
+
+// ===== ACTIVE SESSION RESUME =====
+
+export async function loadActiveSession() {
+  try {
+    const { data, error } = await supabase
+      .from('math_practice_sessions')
+      .select('*')
+      .eq('student_name', STUDENT)
+      .is('ended_at', null)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Failed to load active session:', error);
+      return null;
+    }
+    // Only resume sessions less than 1 hour old
+    if (data && Date.now() - new Date(data.started_at).getTime() < 60 * 60 * 1000) {
+      return data;
+    }
+    return null;
+  } catch (e) {
+    console.error('Active session load error:', e);
+    return null;
+  }
+}
+
+export async function saveSessionState(sessionId, state) {
+  await safeWrite({
+    type: 'update-session',
+    id: sessionId,
+    data: {
+      problems_attempted: state.problemIndex,
+      problems_correct: state.correctCount,
+      xp_earned: state.sessionXP,
+      streak_high: state.bestStreak,
+      mastery_snapshot: state.sessionMastery,
+      topics_covered: state.topicsCovered,
+      session_state: state,
+    },
+  });
 }
 
 // ===== LEGACY: Diagnostic Summary (keep backward compatibility) =====

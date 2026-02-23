@@ -11,6 +11,7 @@ import {
 import {
   saveSummary, loadSummary, saveSessionResult,
   loadProfile, saveProfile, createSession, updateSession, saveProblemResult, flushWriteQueue,
+  loadActiveSession, saveSessionState,
 } from './supabase';
 import './App.css';
 
@@ -710,32 +711,36 @@ function MasteryMapScreen({ results, mastery, onDrill, onFinalBoss, onPractice, 
 
 // ===== PRACTICE SESSION SCREEN =====
 
-function SessionScreen({ profile, mastery, onComplete }) {
-  const [sessionId] = useState(() => crypto.randomUUID());
-  const [startTime] = useState(Date.now());
-  const [problemIndex, setProblemIndex] = useState(0);
+function SessionScreen({ profile, mastery, onComplete, resumeSession }) {
+  const rs = resumeSession?.session_state || {};
+  const [sessionId] = useState(() => resumeSession?.id || crypto.randomUUID());
+  const [startTime] = useState(() => resumeSession ? new Date(resumeSession.started_at).getTime() : Date.now());
+  const [problemIndex, setProblemIndex] = useState(rs.problemIndex || 0);
   const [currentProblem, setCurrentProblem] = useState(null);
   const [problemStartTime, setProblemStartTime] = useState(Date.now());
-  const [streak, setStreak] = useState(0);
-  const [sessionXP, setSessionXP] = useState(0);
-  const [sessionResults, setSessionResults] = useState([]);
-  const [topicHistory, setTopicHistory] = useState(profile.topic_history || {});
-  const [recentTopics, setRecentTopics] = useState([]);
+  const [streak, setStreak] = useState(rs.streak || 0);
+  const [sessionXP, setSessionXP] = useState(rs.sessionXP || 0);
+  const [sessionResults, setSessionResults] = useState(rs.sessionResults || []);
+  const [topicHistory, setTopicHistory] = useState(rs.topicHistory || profile.topic_history || {});
+  const [recentTopics, setRecentTopics] = useState(rs.recentTopics || []);
   const [xpFloat, setXpFloat] = useState({ xp: 0, visible: false });
   const [showLevelUp, setShowLevelUp] = useState(null);
-  const [sessionMastery, setSessionMastery] = useState({ ...mastery });
+  const [sessionMastery, setSessionMastery] = useState(rs.sessionMastery || { ...mastery });
   const [masteryToast, setMasteryToast] = useState(null);
-  const [countdown, setCountdown] = useState(3);
-  const [sessionStarted, setSessionStarted] = useState(false);
-  const prevLevelRef = useRef(profile.level || 1);
-  const hardCorrectStreakRef = useRef(0);
-  const bestHardStreakRef = useRef(0);
-  const hadComebackRef = useRef(false);
-  const lastWasWrongRef = useRef(false);
+  const [countdown, setCountdown] = useState(resumeSession ? 0 : 3);
+  const [sessionStarted, setSessionStarted] = useState(!!resumeSession);
+  const prevLevelRef = useRef(rs.prevLevel || profile.level || 1);
+  const hardCorrectStreakRef = useRef(rs.hardCorrectStreak || 0);
+  const bestHardStreakRef = useRef(rs.bestHardStreak || 0);
+  const hadComebackRef = useRef(rs.hadComeback || false);
+  const lastWasWrongRef = useRef(rs.lastWasWrong || false);
 
-  // Register session in Supabase
+  // Register session in Supabase (only for new sessions)
   useEffect(() => {
-    createSession('practice').catch(() => {});
+    if (!resumeSession) {
+      // We pass our own sessionId so Supabase session matches local state
+      createSession('practice', sessionId).catch(() => {});
+    }
   }, []);
 
   // Countdown
@@ -879,8 +884,31 @@ function SessionScreen({ profile, mastery, onComplete }) {
       setTimeout(() => setXpFloat({ xp: 0, visible: false }), 1500);
     }
 
-    // Next problem or finish
+    // Save session state after every answer for crash recovery
     const nextIndex = problemIndex + 1;
+    const newSessionXP = sessionXP + xp;
+    const bestStrk = Math.max(newStreak, ...(newResults.map(() => 0)));
+    const topicsCovered = [...new Set(newResults.map(r => r.topic))];
+    const updatedMastery = masteryChange ? { ...sessionMastery, [currentProblem.topic]: masteryChange } : sessionMastery;
+    saveSessionState(sessionId, {
+      problemIndex: nextIndex,
+      correctCount: newResults.filter(r => r.correct).length,
+      sessionXP: newSessionXP,
+      bestStreak: bestStrk,
+      streak: newStreak,
+      sessionMastery: updatedMastery,
+      topicsCovered,
+      sessionResults: newResults,
+      topicHistory: newHistory,
+      recentTopics: [...recentTopics.slice(-2), currentProblem.topic],
+      prevLevel: prevLevelRef.current,
+      hardCorrectStreak: hardCorrectStreakRef.current,
+      bestHardStreak: bestHardStreakRef.current,
+      hadComeback: hadComebackRef.current,
+      lastWasWrong: lastWasWrongRef.current,
+    }).catch(() => {});
+
+    // Next problem or finish
     if (nextIndex >= SESSION_LIMIT_PROBLEMS || Date.now() - startTime >= SESSION_LIMIT_MS) {
       setTimeout(finishSession, 1000);
     } else {
@@ -1208,6 +1236,7 @@ export default function App() {
   const [confidenceData, setConfidenceData] = useState({});
   const [profile, setProfile] = useState(defaultProfile);
   const [sessionData, setSessionData] = useState(null);
+  const [resumeSession, setResumeSession] = useState(null);
 
   // Check for saved progress on mount — try Supabase first, then localStorage
   useEffect(() => {
@@ -1255,6 +1284,15 @@ export default function App() {
         setConfidenceData(local.confidence || {});
         saveSummary(local.results, m, local.confidence || {});
       }
+
+      // Check for active session to resume (crash recovery)
+      try {
+        const activeSession = await loadActiveSession();
+        if (activeSession && activeSession.session_state) {
+          setResumeSession(activeSession);
+          setScreen('session');
+        }
+      } catch {}
     }
     init();
   }, []);
@@ -1335,10 +1373,12 @@ export default function App() {
   }, [currentTopic]);
 
   const handlePracticeSession = useCallback(() => {
+    setResumeSession(null); // clear any stale resume — start fresh
     setScreen('session');
   }, []);
 
   const handleSessionComplete = useCallback((data) => {
+    setResumeSession(null); // session done, no more resume
     const { sessionXP, topicHistory, sessionMastery, totalCorrect, totalAttempted, streak, hardCorrectStreak, hadComeback } = data;
 
     // Update profile
@@ -1498,10 +1538,11 @@ export default function App() {
         )}
         {screen === 'session' && (
           <SessionScreen
-            key={Date.now()}
+            key={resumeSession ? 'resume-' + resumeSession.id : Date.now()}
             profile={profile}
             mastery={mastery}
             onComplete={handleSessionComplete}
+            resumeSession={resumeSession}
           />
         )}
         {screen === 'session-summary' && sessionData && (
