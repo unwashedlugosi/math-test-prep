@@ -103,6 +103,42 @@ export async function loadProfile() {
       console.error('Failed to load profile:', error);
       return null;
     }
+
+    // Cross-check XP against problem_results (source of truth)
+    if (data) {
+      try {
+        const { data: problems } = await supabase
+          .from('math_problem_results')
+          .select('xp_awarded')
+          .eq('student_name', STUDENT);
+
+        if (problems && problems.length > 0) {
+          const realXP = problems.reduce((sum, p) => sum + (p.xp_awarded || 0), 0);
+          const realCount = problems.length;
+          if (realXP > (data.total_xp || 0)) {
+            // Profile is behind — fix it
+            data.total_xp = realXP;
+            data.problems_solved = Math.max(data.problems_solved || 0, realCount);
+            // Recalculate level from XP thresholds
+            const thresholds = [0, 50, 150, 300, 500, 800, 1200, 1800, 2500];
+            let lvl = 1;
+            for (let i = thresholds.length - 1; i >= 0; i--) {
+              if (realXP >= thresholds[i]) { lvl = i + 1; break; }
+            }
+            data.level = lvl;
+            // Persist the correction
+            await supabase.from('math_student_profile').upsert({
+              student_name: STUDENT,
+              total_xp: realXP,
+              level: lvl,
+              problems_solved: data.problems_solved,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'student_name' });
+          }
+        }
+      } catch {}
+    }
+
     return data;
   } catch (e) {
     console.error('Profile load error:', e);
