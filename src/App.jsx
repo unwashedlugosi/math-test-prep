@@ -1406,7 +1406,7 @@ export default function App() {
     setResumeSession(null); // session done, no more resume
     const { sessionXP, topicHistory, sessionMastery, totalCorrect, totalAttempted, streak, hardCorrectStreak, hadComeback } = data;
 
-    // Update profile
+    // Update profile and send parent report with the updated values
     setProfile(prev => {
       const newXP = (prev.total_xp || 0) + sessionXP;
       const newLevel = getLevelForXP(newXP);
@@ -1428,7 +1428,7 @@ export default function App() {
         sessionsCompleted: newSessionsCompleted,
       });
 
-      return {
+      const updatedProfile = {
         ...prev,
         total_xp: newXP,
         level: newLevel.level,
@@ -1440,6 +1440,11 @@ export default function App() {
         sessions_completed: newSessionsCompleted,
         problems_solved: (prev.problems_solved || 0) + totalAttempted,
       };
+
+      // Send parent report with the correct post-session profile
+      sendParentReport(data, updatedProfile).catch(() => {});
+
+      return updatedProfile;
     });
 
     // Update diagnostic-level mastery
@@ -1450,12 +1455,6 @@ export default function App() {
 
     // Flush any queued writes
     flushWriteQueue().catch(() => {});
-
-    // Send parent report via Carrier Pigeon
-    setProfile(current => {
-      sendParentReport(data, current).catch(() => {});
-      return current; // no change, just reading current value
-    });
   }, []);
 
   const handleFinalBossComplete = useCallback((correct, total, elapsed) => {
