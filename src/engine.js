@@ -125,7 +125,6 @@ export const TOPICS = {
   'word-subtract': { name: 'Word Problems: Subtraction', icon: '📝' },
   'word-multistep': { name: 'Word Problems: Multi-Step', icon: '📝' },
   'word-compare': { name: 'Word Problems: Comparing', icon: '📝' },
-  'word-convert': { name: 'Word Problems: Unit Conversion', icon: '📝' },
 };
 
 // ===== EXPLANATION BUILDER =====
@@ -934,7 +933,6 @@ const GENERATORS = {
   'word-subtract': genWordSubtract,
   'word-multistep': genWordMultistep,
   'word-compare': genWordCompare,
-  'word-convert': genWordConvert,
 };
 
 function generateProblem(topic, hard = false) {
@@ -1195,11 +1193,8 @@ export function checkSlidingMastery(topicHistory, topic) {
 
 // ===== WEIGHTED TOPIC SELECTION =====
 
-// Topics that require multiplication/division — not in Chapter 8
-const EXCLUDED_TOPICS = new Set(['word-convert']);
-
 export function selectSessionTopic(mastery, topicHistory, recentTopics = []) {
-  const allTopics = Object.keys(TOPICS).filter(t => !EXCLUDED_TOPICS.has(t));
+  const allTopics = Object.keys(TOPICS);
   const weights = {};
 
   for (const topic of allTopics) {
